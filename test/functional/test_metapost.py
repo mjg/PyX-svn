@@ -386,9 +386,9 @@ def check(knots, refpoints, eps=1.0e-3, rel=1.0e-5): # <<<
         p = p.next
 # >>>
 def checkone(knots, refpoints): # <<<
-    print myprint(knots)
+    print(myprint(knots))
     mp_make_choices(knots, epsilon)
-    print myprint(knots)
+    print(myprint(knots))
 
     c = canvas.canvas()
     c.stroke(mypath(knots), [deco.shownormpath(), deco.earrow.normal])

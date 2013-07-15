@@ -22,8 +22,8 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 import warnings
-from pyx import bbox, canvasitem, deco, path, pswriter, pdfwriter, trafo, unit, pycompat
-import t1file, afmfile
+from pyx import bbox, baseclasses, deco, path, pswriter, pdfwriter, trafo, unit
+from . import t1file, afmfile
 
 
 ##############################################################################
@@ -39,8 +39,8 @@ class PST1file(pswriter.PSresource):
         self.type = "t1file"
         self.t1file = t1file
         self.id = t1file.name
-        self.glyphnames = pycompat.set(glyphnames)
-        self.charcodes = pycompat.set(charcodes)
+        self.glyphnames = set(glyphnames)
+        self.charcodes = set(charcodes)
 
     def merge(self, other):
         self.glyphnames.update(other.glyphnames)
@@ -59,7 +59,7 @@ class PST1file(pswriter.PSresource):
         file.write("\n%%EndFont\n")
 
 
-_ReEncodeFont = pswriter.PSdefinition("ReEncodeFont", """{
+_ReEncodeFont = pswriter.PSdefinition("ReEncodeFont", b"""{
   5 dict
   begin
     /newencoding exch def
@@ -96,7 +96,7 @@ class PSreencodefont(pswriter.PSresource):
         file.write("%%%%BeginResource: %s\n" % self.newfontname)
         file.write("/%s /%s\n[" % (self.basefontname, self.newfontname))
         vector = [None] * len(self.encoding)
-        for glyphname, charcode in self.encoding.items():
+        for glyphname, charcode in list(self.encoding.items()):
             vector[charcode] = glyphname
         for i, glyphname in enumerate(vector):
             if i:
@@ -110,7 +110,7 @@ class PSreencodefont(pswriter.PSresource):
         file.write("%%EndResource\n")
 
 
-_ChangeFontMatrix = pswriter.PSdefinition("ChangeFontMatrix", """{
+_ChangeFontMatrix = pswriter.PSdefinition("ChangeFontMatrix", b"""{
   5 dict
   begin
     /newfontmatrix exch def
@@ -162,7 +162,7 @@ class PDFfont(pdfwriter.PDFobject):
 
         self.fontname = fontname
         self.basefontname = basefontname
-        self.charcodes = pycompat.set(charcodes)
+        self.charcodes = set(charcodes)
         self.fontdescriptor = fontdescriptor
         self.encoding = encoding
         self.metric = metric
@@ -185,6 +185,8 @@ class PDFfont(pdfwriter.PDFobject):
         if self.encoding:
             encoding = self.encoding.getvector()
         else:
+            if self.fontdescriptor.fontfile.t1file.encoding is None:
+                self.fontdescriptor.fontfile.t1file._encoding()
             encoding = self.fontdescriptor.fontfile.t1file.encoding
         for i in range(firstchar, lastchar+1):
             if i:
@@ -263,8 +265,8 @@ class PDFfontfile(pdfwriter.PDFobject):
     def __init__(self, t1file, glyphnames, charcodes):
         pdfwriter.PDFobject.__init__(self, "fontfile", t1file.name)
         self.t1file = t1file
-        self.glyphnames = pycompat.set(glyphnames)
-        self.charcodes = pycompat.set(charcodes)
+        self.glyphnames = set(glyphnames)
+        self.charcodes = set(charcodes)
 
     def merge(self, other):
         self.glyphnames.update(other.glyphnames)
@@ -287,7 +289,7 @@ class PDFencoding(pdfwriter.PDFobject):
         # As self.encoding might be appended after the constructur has set it,
         # we need to defer the calculation until the whole content was constructed.
         vector = [None] * len(self.encoding)
-        for glyphname, charcode in self.encoding.items():
+        for glyphname, charcode in list(self.encoding.items()):
             vector[charcode] = glyphname
         return vector
 
@@ -352,9 +354,10 @@ class selectedfont:
         file.write("/%s %f Tf\n" % (self.name, self.size_pt))
 
 
-class text_pt(canvasitem.canvasitem):
+class text_pt(baseclasses.canvasitem):
 
-    pass
+    def requiretextregion(self):
+        return True
 
 
 class T1text_pt(text_pt):
@@ -399,13 +402,13 @@ class T1text_pt(text_pt):
         """returns the name of the encoding (in encodings) mapping self.glyphnames to codepoints
         If no such encoding can be found or extended, a new encoding is added to encodings
         """
-        glyphnames = pycompat.set(self.glyphnames)
+        glyphnames = set(self.glyphnames)
         if len(glyphnames) > 256:
             raise ValueError("glyphs do not fit into one single encoding")
-        for encodingname, encoding in encodings.items():
+        for encodingname, encoding in list(encodings.items()):
             glyphsmissing = []
             for glyphname in glyphnames:
-                if glyphname not in encoding.keys():
+                if glyphname not in list(encoding.keys()):
                     glyphsmissing.append(glyphname)
 
             if len(glyphsmissing) + len(encoding) < 256:

@@ -21,7 +21,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 
-import cStringIO, struct
+import io, struct
 
 
 class reader:
@@ -60,12 +60,10 @@ class reader:
         return struct.unpack(">L", self.file.read(4))[0]
 
     def readint24(self):
-        # XXX: checkme
-        return struct.unpack(">l", "\0"+self.file.read(3))[0]
+        return struct.unpack(">l", b"\0"+self.file.read(3))[0]
 
     def readuint24(self):
-        # XXX: checkme
-        return struct.unpack(">L", "\0"+self.file.read(3))[0]
+        return struct.unpack(">L", b"\0"+self.file.read(3))[0]
 
     def readint16(self):
         return struct.unpack(">h", self.file.read(2))[0]
@@ -85,17 +83,18 @@ class reader:
         return self.file.read(bytes-1)[:l]
 
 
+class bytesreader(reader):
 
-class stringreader(reader):
-
-    def __init__(self, s):
-        self.file = cStringIO.StringIO(s)
+    def __init__(self, b):
+        self.file = io.BytesIO(b)
 
 
 class PStokenizer:
     """cursor to read a string token by token"""
 
-    def __init__(self, data, startstring=None, eattokensep=1, tokenseps=" \t\r\n", tokenstarts="()<>[]{}/%"):
+    def __init__(self, data, startstring=None, eattokensep=1,
+                 tokenseps=" \t\r\n", tokenstarts="()<>[]{}/%",
+                 commentchar="%", newlinechars="\r\n"):
         """creates a cursor for the string data
 
         startstring is a string at which the cursor should start at. The first
@@ -114,6 +113,8 @@ class PStokenizer:
             self.pos = 0
         self.tokenseps = tokenseps
         self.tokenstarts = tokenstarts
+        self.commentchar = commentchar
+        self.newlinechars = newlinechars
         if eattokensep:
             if self.data[self.pos] not in self.tokenstarts:
                 if self.data[self.pos] not in self.tokenseps:
@@ -128,8 +129,8 @@ class PStokenizer:
         while self.data[self.pos] in self.tokenseps:
             self.pos += 1
         # ignore comments including subsequent whitespace characters
-        while self.data[self.pos] == "%":
-            while self.data[self.pos] not in "\r\n":
+        while self.data[self.pos] == self.commentchar:
+            while self.data[self.pos] not in self.newlinechars:
                 self.pos += 1
             while self.data[self.pos] in self.tokenseps:
                 self.pos += 1
@@ -156,3 +157,11 @@ class PStokenizer:
 
 
 
+class PSbytes_tokenizer(PStokenizer):
+
+    def __init__(self, data, startstring=None, eattokensep=1,
+                 tokenseps=b" \t\r\n", tokenstarts=b"()<>[]{}/%",
+                 commentchar=b"%", newlinechars=b"\r\n"):
+        super().__init__(data, startstring=startstring, eattokensep=eattokensep,
+                         tokenseps=tokenseps, tokenstarts=tokenstarts,
+                         commentchar=commentchar, newlinechars=newlinechars)

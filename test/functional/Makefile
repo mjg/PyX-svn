@@ -1,4 +1,4 @@
-PYTHON ?= python
+PYTHON ?= python3
 
 pyfiles = $(wildcard *.py)
 epsfiles = $(patsubst %.py, %.eps, $(pyfiles))
@@ -8,7 +8,7 @@ all:
 	make eps
 
 clean:
-	-rm -f *.eps eps/*.eps
+	-rm -f *.eps eps/*.eps *.pdf
 
 eps: $(epsfiles)
 

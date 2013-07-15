@@ -22,7 +22,7 @@ from math import atan2, radians
 from pyx import unit, attr, normpath
 from pyx import path as pathmodule
 
-from mp_path import mp_endpoint, mp_explicit, mp_given, mp_curl, mp_open, mp_end_cycle, mp_make_choices
+from .mp_path import mp_endpoint, mp_explicit, mp_given, mp_curl, mp_open, mp_end_cycle, mp_make_choices
 
 # global epsilon (default precision length of metapost, in pt)
 _epsilon = 1e-5

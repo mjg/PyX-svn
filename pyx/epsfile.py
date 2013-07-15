@@ -21,13 +21,13 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 import os, string, tempfile, warnings
-import canvasitem, bbox, filelocator, unit, trafo, pswriter
+from . import baseclasses, bbox, config, unit, trafo, pswriter
 
 # PostScript-procedure definitions (cf. 5002.EPSF_Spec_v3.0.pdf)
 # with important correction in EndEPSF:
 #   end operator is missing in the spec!
 
-_BeginEPSF = pswriter.PSdefinition("BeginEPSF", """{
+_BeginEPSF = pswriter.PSdefinition("BeginEPSF", b"""{
   /b4_Inc_state save def
   /dict_count countdictstack def
   /op_count count 1 sub def
@@ -44,7 +44,7 @@ _BeginEPSF = pswriter.PSdefinition("BeginEPSF", """{
   } if
 } bind""")
 
-_EndEPSF = pswriter.PSdefinition("EndEPSF", """{
+_EndEPSF = pswriter.PSdefinition("EndEPSF", b"""{
   end
   count op_count sub {pop} repeat
   countdictstack dict_count sub {end} repeat
@@ -75,7 +75,7 @@ class linefilereader:
         #       linebreak characters. However, we also handle
         #       lines longer than that.
         self.file = file
-        self.buffer = ""
+        self.buffer = b""
         self.typicallinelen = typicallinelen
 
     def read(self, count=None, EOFmsg="unexpected end of file"):
@@ -112,9 +112,9 @@ class linefilereader:
         an IOError with the EOFmsg message. When EOFmsg is None, an empty
         string is returned when reading beyond the end of the file."""
         EOF = 0
-        while 1:
-            crpos = self.buffer.find("\r")
-            nlpos = self.buffer.find("\n")
+        while True:
+            crpos = self.buffer.find(b"\r")
+            nlpos = self.buffer.find(b"\n")
             if nlpos == -1 and (crpos == -1 or crpos == len(self.buffer) - 1) and not EOF:
                 newbuffer = self.file.read(self.typicallinelen)
                 if not len(newbuffer):
@@ -133,7 +133,6 @@ class linefilereader:
                 return result
 
     def close(self):
-        "closes the file"
         self.file.close()
 
 
@@ -143,24 +142,24 @@ def _readbbox(file):
     file = linefilereader(file)
 
     # check the %! header comment
-    if not file.readline().startswith("%!"):
+    if not file.readline().startswith(b"%!"):
         raise IOError("file doesn't start with a '%!' header comment")
 
     bboxatend = 0
     # parse the header (use the first BoundingBox)
-    while 1:
+    while True:
         line = file.readline()
         if not line:
             break
-        if line.startswith("%%BoundingBox:") and not bboxatend:
-            values = line.split(":", 1)[1].split()
+        if line.startswith(b"%%BoundingBox:") and not bboxatend:
+            values = line.split(b":", 1)[1].split()
             if values == ["(atend)"]:
                 bboxatend = 1
             else:
                 if len(values) != 4:
                     raise IOError("invalid number of bounding box values")
-                return bbox.bbox_pt(*map(int, values))
-        elif (line.rstrip() == "%%EndComments" or
+                return bbox.bbox_pt(*list(map(int, values)))
+        elif (line.rstrip() == b"%%EndComments" or
               (len(line) >= 2 and line[0] != "%" and line[1] not in string.whitespace)):
             # implicit end of comments section
             break
@@ -169,17 +168,17 @@ def _readbbox(file):
 
     # parse the body
     nesting = 0 # allow for nested documents
-    while 1:
+    while True:
         line = file.readline()
-        if line.startswith("%%BeginData:"):
+        if line.startswith(b"%%BeginData:"):
             values = line.split(":", 1)[1].split()
             if len(values) > 3:
                 raise IOError("invalid number of arguments")
             if len(values) == 3:
-                if values[2] == "Lines":
-                    for i in xrange(int(values[0])):
+                if values[2] == b"Lines":
+                    for i in range(int(values[0])):
                         file.readline()
-                elif values[2] != "Bytes":
+                elif values[2] != b"Bytes":
                     raise IOError("invalid bytesorlines-value")
                 else:
                     file.read(int(values[0]))
@@ -189,23 +188,23 @@ def _readbbox(file):
             # ignore tailing whitespace/newline for binary data
             if (len(values) < 3 or values[2] != "Lines") and not len(line.strip()):
                 line = file.readline()
-            if line.rstrip() != "%%EndData":
+            if line.rstrip() != b"%%EndData":
                 raise IOError("missing EndData")
-        elif line.startswith("%%BeginBinary:"):
+        elif line.startswith(b"%%BeginBinary:"):
             file.read(int(line.split(":", 1)[1]))
             line = file.readline()
             # ignore tailing whitespace/newline
             if not len(line.strip()):
                 line = file.readline()
-            if line.rstrip() != "%%EndBinary":
+            if line.rstrip() != b"%%EndBinary":
                 raise IOError("missing EndBinary")
-        elif line.startswith("%%BeginDocument:"):
+        elif line.startswith(b"%%BeginDocument:"):
             nesting += 1
-        elif line.rstrip() == "%%EndDocument":
+        elif line.rstrip() == b"%%EndDocument":
             if nesting < 1:
                 raise IOError("unmatched EndDocument")
             nesting -= 1
-        elif not nesting and line.rstrip() == "%%Trailer":
+        elif not nesting and line.rstrip() == b"%%Trailer":
             break
 
     usebbox = None
@@ -214,16 +213,16 @@ def _readbbox(file):
     while line:
         line = file.readline(EOFmsg=None)
         if line.startswith("%%BoundingBox:"):
-            values = line.split(":", 1)[1].split()
+            values = line.split(b":", 1)[1].split()
             if len(values) != 4:
                 raise IOError("invalid number of bounding box values")
-            usebbox = bbox.bbox_pt(*map(int, values))
+            usebbox = bbox.bbox_pt(*list(map(int, values)))
     if not usebbox:
         raise IOError("missing bounding box information in document trailer")
     return usebbox
 
 
-class epsfile(canvasitem.canvasitem):
+class epsfile(baseclasses.canvasitem):
 
     """class for epsfiles"""
 
@@ -313,7 +312,7 @@ class epsfile(canvasitem.canvasitem):
 
     def open(self):
         if self.kpsearch:
-            return filelocator.open(self.filename, [filelocator.format.pict], "rb")
+            return config.open(self.filename, [config.format.pict])
         else:
             return open(self.filename, "rb")
 
@@ -336,7 +335,7 @@ class epsfile(canvasitem.canvasitem):
         file.write("%%%%BeginDocument: %s\n" % self.filename)
 
         epsfile = self.open()
-        file.write(epsfile.read())
+        file.write_bytes(epsfile.read())
         epsfile.close()
 
         file.write("%%EndDocument\n")
@@ -345,10 +344,7 @@ class epsfile(canvasitem.canvasitem):
     def processPDF(self, file, writer, context, registry, bbox):
         warnings.warn("EPS file is included as a bitmap created using pipeGS")
         from pyx import bitmap, canvas
-        try:
-            from PIL import Image
-        except ImportError:
-            import Image
+        from PIL import Image
         c = canvas.canvas()
         c.insert(self)
         i = Image.open(c.pipeGS(device="pngalpha", resolution=600, seekable=True))

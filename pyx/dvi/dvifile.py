@@ -21,9 +21,9 @@
 # along with PyX; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
-import cStringIO, math, re, string, struct, sys, warnings
-from pyx import  bbox, canvas, color, epsfile, filelocator, path, reader, trafo, unit
-import texfont, tfmfile
+import io, math, re, struct, sys, warnings
+from pyx import  bbox, canvas, color, epsfile, config, path, reader, trafo, unit
+from . import texfont, tfmfile
 
 
 _DVI_CHARMIN     =   0 # typeset a character and move right (range min)
@@ -117,7 +117,7 @@ class DVIfile:
         self.actpage = c
 
     def endsubpage(self):
-        for key, value in self.actpage.markers.items():
+        for key, value in list(self.actpage.markers.items()):
             self.actpage.parent.markers[key] = self.actpage.trafo.apply(*value)
         self.actpage = self.actpage.parent
 
@@ -200,7 +200,7 @@ class DVIfile:
 
         # check whether it's a virtual font by trying to open it. if this fails, it is an ordinary TeX font
         try:
-             fontfile = filelocator.open(fontname, [filelocator.format.vf], mode="rb")
+            fontfile = config.open(fontname, [config.format.vf])
         except IOError:
             afont = texfont.TeXfont(fontname, c, q/self.tfmconv, d/self.tfmconv, self.tfmconv, self.pyxconv, self.debug>1)
         else:
@@ -296,20 +296,20 @@ class DVIfile:
             epskwargs["filename"] = argdict["file"]
             epskwargs["bbox"] = bbox.bbox_pt(float(argdict["llx"]), float(argdict["lly"]),
                                            float(argdict["urx"]), float(argdict["ury"]))
-            if argdict.has_key("width"):
+            if "width" in argdict:
                 epskwargs["width"] = float(argdict["width"]) * unit.t_pt
-            if argdict.has_key("height"):
+            if "height" in argdict:
                 epskwargs["height"] = float(argdict["height"]) * unit.t_pt
-            if argdict.has_key("clip"):
+            if "clip" in argdict:
                epskwargs["clip"] = int(argdict["clip"])
             self.actpage.insert(epsfile.epsfile(x * unit.t_pt, y * unit.t_pt, **epskwargs))
         elif command == "marker":
             if len(args) != 1:
                 raise RuntimeError("marker contains spaces")
             for c in args[0]:
-                if c not in string.digits + string.letters + "@":
+                if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@":
                     raise RuntimeError("marker contains invalid characters")
-            if self.actpage.markers.has_key(args[0]):
+            if args[0] in self.actpage.markers:
                 raise RuntimeError("marker name occurred several times")
             self.actpage.markers[args[0]] = x * unit.t_pt, y * unit.t_pt
         else:
@@ -337,7 +337,7 @@ class DVIfile:
         # This yields the following scale factor for the height and width of rects:
         self.scale = fontsize/2**20/self.pyxconv
 
-        self.file = reader.stringreader(dvi)
+        self.file = reader.bytesreader(dvi)
         self.fonts = fonts
         self.stack = []
         self.filepos = 0
@@ -357,7 +357,7 @@ class DVIfile:
 
     def _read_pre(self):
         afile = self.file
-        while 1:
+        while True:
             self.filepos = afile.tell()
             cmd = afile.readuchar()
             if cmd == _DVI_NOP:
@@ -405,7 +405,7 @@ class DVIfile:
 
         self.singlecharmode = singlecharmode
 
-        while 1:
+        while True:
             self.filepos = self.file.tell()
             cmd = self.file.readuchar()
             if cmd == _DVI_NOP:
@@ -431,7 +431,7 @@ class DVIfile:
         # tuple (hpos, vpos, codepoints) to be output, or None if no output is pending
         self.activetext = None
 
-        while 1:
+        while True:
             afile = self.file
             self.filepos = afile.tell()
             try:
@@ -591,7 +591,7 @@ class DVIfile:
                 fntnum = afile.readint(cmd - _DVI_FNT1234 + 1, cmd == _DVI_FNT1234 + 3)
                 self.usefont(fntnum, cmd-_DVI_FNT1234+1, fontmap)
             elif cmd >= _DVI_SPECIAL1234 and cmd < _DVI_SPECIAL1234 + 4:
-                self.special(afile.read(afile.readint(cmd - _DVI_SPECIAL1234 + 1)), fontmap)
+                self.special(afile.read(afile.readint(cmd - _DVI_SPECIAL1234 + 1)).decode("ascii"), fontmap)
             elif cmd >= _DVI_FNTDEF1234 and cmd < _DVI_FNTDEF1234 + 4:
                 if cmd == _DVI_FNTDEF1234:
                     num = afile.readuchar()
@@ -607,6 +607,6 @@ class DVIfile:
                                 afile.readint32(),
                                 afile.readint32(),
                                 afile.readint32(),
-                                afile.read(afile.readuchar()+afile.readuchar()))
+                                afile.read(afile.readuchar()+afile.readuchar()).decode("ascii"))
             else:
                 raise DVIError
