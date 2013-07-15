@@ -22,16 +22,17 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 
-import sys
+import sys, functools
 
 # test automatic long conversion
 try:
-    sys.maxint+1
+    sys.maxsize+1
     autolong = 1
 except OverflowError:
     autolong = 0
 
 
+@functools.total_ordering
 class rational:
     """rational class performing some basic rational arithmetics
     the axis partitioning uses rational arithmetics (with infinite accuracy)
@@ -51,7 +52,7 @@ class rational:
         if autolong:
             self.denom = 10 ** len(commaparts[1])
         else:
-            self.denom = 10L ** len(commaparts[1])
+            self.denom = 10 ** len(commaparts[1])
         neg = len(commaparts[0]) and commaparts[0][0] == "-"
         if neg:
             commaparts[0] = commaparts[0][1:]
@@ -63,7 +64,7 @@ class rational:
             try:
                 x = int(commaparts[0])
             except:
-                x = long(commaparts[0])
+                x = int(commaparts[0])
         else:
             x = 0
         if len(commaparts[1]):
@@ -72,7 +73,7 @@ class rational:
             try:
                 y = int(commaparts[1])
             except:
-                y = long(commaparts[1])
+                y = int(commaparts[1])
         else:
             y = 0
         self.num = x*self.denom + y
@@ -90,12 +91,12 @@ class rational:
                 if autolong:
                     self.denom *= 10 ** int(expparts[1])
                 else:
-                    self.denom *= 10L ** int(expparts[1])
+                    self.denom *= 10 ** int(expparts[1])
             else:
                 if autolong:
                     self.num *= 10 ** int(expparts[1])
                 else:
-                    self.num *= 10L ** int(expparts[1])
+                    self.num *= 10 ** int(expparts[1])
 
     def initfromfloat(self, x, floatprecision):
         "converts a float into a rational with finite resolution"
@@ -147,20 +148,26 @@ class rational:
             if autolong:
                 self.num, self.denom = self.denom ** (-power), self.num ** (-power)
             else:
-                self.num, self.denom = long(self.denom) ** (-power), long(self.num) ** (-power)
+                self.num, self.denom = int(self.denom) ** (-power), int(self.num) ** (-power)
         elif power > 1:
             if autolong:
                 self.num = self.num ** power
                 self.denom = self.denom ** power
             else:
-                self.num = long(self.num) ** power
-                self.denom = long(self.denom) ** power
+                self.num = int(self.num) ** power
+                self.denom = int(self.denom) ** power
 
-    def __cmp__(self, other):
+    def __lt__(self, other):
         try:
-            return cmp(self.num * other.denom, other.num * self.denom)
+            return self.num * other.denom < other.num * self.denom
         except:
-            return cmp(float(self), other)
+            return float(self) < other
+
+    def __eq__(self, other):
+        try:
+            return self.num * other.denom == other.num * self.denom
+        except:
+            return float(self) == other
 
     def __abs__(self):
         return rational((abs(self.num), abs(self.denom)))
@@ -240,7 +247,7 @@ def mergeticklists(list1, list2, mergeequal=1):
     i = 0
     j = 0
     try:
-        while 1: # we keep on going until we reach an index error
+        while True: # we keep on going until we reach an index error
             while list2[j] < list1[i]: # insert tick
                list1.insert(i, list2[j])
                i += 1

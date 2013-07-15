@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
 #
 #
-# Copyright (C) 2011 Jörg Lehmann <joergl@users.sourceforge.net>
-# Copyright (C) 2005-2011 André Wobst <wobsta@users.sourceforge.net>
+# Copyright (C) 2013 Jörg Lehmann <joergl@users.sourceforge.net>
+# Copyright (C) 2013 André Wobst <wobsta@users.sourceforge.net>
 #
 # This file is part of PyX (http://pyx.sourceforge.net/).
 #
@@ -20,9 +20,21 @@
 # along with PyX; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
-from . import font
-__allfont__ = ["T1font", "T1builtinfont", "text_pt", "font"]
-for importfromfont in __allfont__:
-    locals()[importfromfont] = getattr(font, importfromfont)
+class writer:
 
-__all__ = __allfont__
+    def __init__(self, file, encoding="ascii", errors="surrogateescape"):
+        self.file = file
+        self.encoding = encoding
+        self.errors = errors
+
+    def write(self, s):
+        self.file.write(s.encode(self.encoding, errors=self.errors))
+
+    def write_bytes(self, b):
+        self.file.write(b)
+
+    def tell(self):
+        return self.file.tell()
+
+    def close(self):
+        self.file.close()

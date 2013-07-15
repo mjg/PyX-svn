@@ -21,13 +21,13 @@
 # along with PyX; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
-import errno, glob, os, threading, Queue, re, tempfile, atexit, time, warnings
-import config, unit, box, canvas, trafo, version, attr, style, filelocator, pycompat, path
+import errno, functools, glob, os, threading, queue, re, tempfile, atexit, time, warnings
+from . import config, unit, box, canvas, trafo, version, attr, style, pycompat, path
 from pyx.dvi import dvifile
-import bbox as bboxmodule
+from . import bbox as bboxmodule
 
 class PyXTeXWarning(UserWarning): pass
-warnings.filterwarnings('always', category=PyXTeXWarning)
+warnings.filterwarnings("always", category=PyXTeXWarning)
 
 ###############################################################################
 # texmessages
@@ -66,7 +66,7 @@ class TexResultError(RuntimeError):
                                 "The expression passed to TeX was:\n"
                                 "  %s\n" % texrunner.expr.replace("\n", "\n  ").rstrip() +
                                 "After parsing the return message from TeX, the following was left:\n" +
-                                reduce(lambda x, y: "%s  %s\n" % (x,y), firstlines, "").rstrip())
+                                functools.reduce(lambda x, y: "%s  %s\n" % (x,y), firstlines, "").rstrip())
         else:
             self.description = description
 
@@ -261,9 +261,9 @@ class _texmessageload(texmessage):
         for i, c in enumerate(s):
             if quotes and level <= maxlevel:
                 if not inquote and c == quotes[0] and i and s[i-1] == brackets[0]:
-                    inquote = 1
+                    inquote = True
                 elif inquote and c == quotes[1]:
-                    inquote = 0
+                    inquote = False
             if inquote:
                 res += c
             else:
@@ -441,7 +441,7 @@ flushhalign.right = flushhalign(1)
 # flushhalign.clear = attr.clearclass(flushhalign) # we can't defined a clearclass for flushhalign since it couldn't clear a halign's flushhalign
 
 
-class halign(attr.exclusiveattr, textattr, boxhalign, flushhalign, _localattr):
+class halign(boxhalign, flushhalign, _localattr):
 
     def __init__(self, aboxhalign, aflushhalign):
         self.boxhalign = aboxhalign
@@ -634,32 +634,32 @@ class _readpipe(threading.Thread):
         """thread routine"""
         def _read():
             # catch interupted system call errors while reading
-            while 1:
+            while True:
                 try:
                     return self.pipe.readline()
-                except IOError, e:
+                except IOError as e:
                     if e.errno != errno.EINTR:
                          raise
         read = _read() # read, what comes in
         try:
             self.expect = self.expectqueue.get_nowait() # read, what should be expected
-        except Queue.Empty:
+        except queue.Empty:
             pass
         while len(read):
             # universal EOL handling (convert everything into unix like EOLs)
             # XXX is this necessary on pipes?
-            read = read.replace("\r", "").replace("\n", "") + "\n"
+            read = read.replace(b"\r", b"").replace(b"\n", b"") + b"\n"
             self.gotqueue.put(read) # report, whats read
             if self.expect is not None and read.find(self.expect) != -1:
                 self.gotevent.set() # raise the got event, when the output was expected (XXX: within a single line)
             read = _read() # read again
             try:
                 self.expect = self.expectqueue.get_nowait()
-            except Queue.Empty:
+            except queue.Empty:
                 pass
         # EOF reached
         self.pipe.close()
-        if self.expect is not None and self.expect.find("PyXInputMarker") != -1:
+        if self.expect is not None and self.expect.find(b"PyXInputMarker") != -1:
             raise RuntimeError("TeX/LaTeX finished unexpectedly")
         self.quitevent.set()
 
@@ -686,7 +686,7 @@ class textbox(box.rect, canvas.canvas):
         canvas.canvas.__init__(self, attrs)
         self.finishdvi = finishdvi
         self.dvicanvas = None
-        self.insertdvicanvas = 0
+        self.insertdvicanvas = False
 
     def transform(self, *trafos):
         if self.insertdvicanvas:
@@ -706,7 +706,7 @@ class textbox(box.rect, canvas.canvas):
             assert self.dvicanvas is not None, "finishdvi is broken"
         if not self.insertdvicanvas:
             self.insert(self.dvicanvas, [self.texttrafo])
-            self.insertdvicanvas = 1
+            self.insertdvicanvas = True
 
     def marker(self, marker):
         self.ensuredvicanvas()
@@ -743,14 +743,14 @@ def _cleantmp(texrunner):
     if texrunner.texruns: # cleanup while TeX is still running?
         texrunner.expectqueue.put_nowait(None)              # do not expect any output anymore
         if texrunner.mode == "latex":                       # try to immediately quit from TeX or LaTeX
-            texrunner.texinput.write("\n\\catcode`\\@11\\relax\\@@end\n")
+            texrunner.texinput.write(b"\n\\catcode`\\@11\\relax\\@@end\n")
         else:
-            texrunner.texinput.write("\n\\end\n")
+            texrunner.texinput.write(b"\n\\end\n")
         texrunner.texinput.close()                          # close the input queue and
         if not texrunner.waitforevent(texrunner.quitevent): # wait for finish of the output
             return                                          # didn't got a quit from TeX -> we can't do much more
         texrunner.texruns = 0
-        texrunner.texdone = 1
+        texrunner.texdone = True
     for usefile in texrunner.usefiles:
         extpos = usefile.rfind(".")
         try:
@@ -762,16 +762,25 @@ def _cleantmp(texrunner):
             os.unlink(file)
         except OSError:
             pass
-    if texrunner.texdebug is not None:
-        try:
-            texrunner.texdebug.close()
-            texrunner.texdebug = None
-        except IOError:
-            pass
 
 
 class _unset:
     pass
+
+
+class Tee(object):
+
+    def __init__(self, *files):
+        self.files = files
+
+    def write(self, data):
+        for file in self.files:
+            file.write(data)
+
+    def close(self):
+        for file in self.files:
+            file.close()
+
 
 class texrunner:
     """TeX/LaTeX interface
@@ -798,6 +807,7 @@ class texrunner:
                        lfs="10pt",
                        docclass="article",
                        docopt=None,
+                       texenc="ascii",
                        usefiles=[],
                        waitfortex=config.getint("text", "waitfortex", 60),
                        showwaitfortex=config.getint("text", "showwaitfortex", 5),
@@ -819,17 +829,12 @@ class texrunner:
         self.lfs = lfs
         self.docclass = docclass
         self.docopt = docopt
+        self.texenc = texenc
         self.usefiles = usefiles[:]
         self.waitfortex = waitfortex
         self.showwaitfortex = showwaitfortex
         self.texipc = texipc
-        if texdebug is not None:
-            if texdebug[-4:] == ".tex":
-                self.texdebug = open(texdebug, "w")
-            else:
-                self.texdebug = open("%s.tex" % texdebug, "w")
-        else:
-            self.texdebug = None
+        self.texdebug = texdebug
         self.dvidebug = dvidebug
         self.errordebug = errordebug
         self.pyxgraphics = pyxgraphics
@@ -841,8 +846,8 @@ class texrunner:
         self.texmessagesdefaultrun = texmessagesdefaultrun[:]
 
         self.texruns = 0
-        self.texdone = 0
-        self.preamblemode = 1
+        self.texdone = False
+        self.preamblemode = True
         self.executeid = 0
         self.page = 0
         self.preambles = []
@@ -892,10 +897,6 @@ class texrunner:
         - when self.preamblemode is unset, the expr is passed to \ProcessPyXBox
         - texmessages is a list of texmessage instances"""
         if not self.texruns:
-            if self.texdebug is not None:
-                self.texdebug.write("%% PyX %s texdebug file\n" % version.version)
-                self.texdebug.write("%% mode: %s\n" % self.mode)
-                self.texdebug.write("%% date: %s\n" % time.asctime(time.localtime(time.time())))
             for usefile in self.usefiles:
                 extpos = usefile.rfind(".")
                 try:
@@ -914,15 +915,17 @@ class texrunner:
             except ValueError:
                 # workaround: bufsize = 0 is not supported on MS windows for os.open4 (Python 2.4 and below, i.e. where subprocess is not available)
                 self.texinput, self.texoutput = pycompat.popen4("%s%s %s" % (self.mode, ipcflag, self.texfilename), "t")
+            if self.texdebug:
+                self.texinput = Tee(self.texinput, open(self.texdebug, "wb"))
             atexit.register(_cleantmp, self)
-            self.expectqueue = Queue.Queue(1)  # allow for a single entry only -> keeps the next InputMarker to be wait for
+            self.expectqueue = queue.Queue(1)  # allow for a single entry only -> keeps the next InputMarker to be wait for
             self.gotevent = threading.Event()  # keeps the got inputmarker event
-            self.gotqueue = Queue.Queue(0)     # allow arbitrary number of entries
+            self.gotqueue = queue.Queue(0)     # allow arbitrary number of entries
             self.quitevent = threading.Event() # keeps for end of terminal event
             self.readoutput = _readpipe(self.texoutput, self.expectqueue, self.gotevent, self.gotqueue, self.quitevent)
             self.texruns = 1
             oldpreamblemode = self.preamblemode
-            self.preamblemode = 1
+            self.preamblemode = True
             self.readoutput.start()
             self.execute("\\scrollmode\n\\raiseerror%\n" # switch to and check scrollmode
                          "\\def\\PyX{P\\kern-.3em\\lower.5ex\hbox{Y}\kern-.18em X}%\n" # just the PyX Logo
@@ -954,15 +957,15 @@ class texrunner:
                 if self.lfs:
                     if not self.lfs.endswith(".lfs"):
                         self.lfs = "%s.lfs" % self.lfs
-                    lfsfile = filelocator.open(self.lfs, [], "r")
-                    lfsdef = lfsfile.read()
+                    lfsfile = config.open(self.lfs, [])
+                    lfsdef = lfsfile.read().decode("ascii")
                     lfsfile.close()
                     self.execute(lfsdef, [])
                     self.execute("\\normalsize%\n", [])
                 self.execute("\\newdimen\\linewidth\\newdimen\\textwidth%\n", [])
             elif self.mode == "latex":
                 if self.pyxgraphics:
-                    pyxdef = filelocator.open("pyx.def", [], "rb")
+                    pyxdef = config.open("pyx.def", [])
                     pyxdef_filename = self.texfilename + ".pyx.def"
                     pyxdef_file = open(pyxdef_filename, "wb")
                     pyxdef_file.write(pyxdef.read())
@@ -986,7 +989,7 @@ class texrunner:
             self.preamblemode = oldpreamblemode
         self.executeid += 1
         if expr is not None: # TeX/LaTeX should process expr
-            self.expectqueue.put_nowait("PyXInputMarker:executeid=%i:" % self.executeid)
+            self.expectqueue.put_nowait(("PyXInputMarker:executeid=%i:" % self.executeid).encode(self.texenc))
             if self.preamblemode:
                 self.expr = ("%s%%\n" % expr +
                              "\\PyXInput{%i}%%\n" % self.executeid)
@@ -995,26 +998,24 @@ class texrunner:
                 self.expr = ("\\ProcessPyXBox{%s%%\n}{%i}%%\n" % (expr, self.page) +
                              "\\PyXInput{%i}%%\n" % self.executeid)
         else: # TeX/LaTeX should be finished
-            self.expectqueue.put_nowait("Transcript written on %s.log" % self.texfilename)
+            self.expectqueue.put_nowait(("Transcript written on %s.log" % self.texfilename).encode(self.texenc))
             if self.mode == "latex":
                 self.expr = "\\end{document}%\n"
             else:
                 self.expr = "\\end%\n"
-        if self.texdebug is not None:
-            self.texdebug.write(self.expr)
-        self.texinput.write(self.expr)
+        self.texinput.write(self.expr.encode(self.texenc))
         gotevent = self.waitforevent(self.gotevent)
         self.gotevent.clear()
         if expr is None and gotevent: # TeX/LaTeX should have finished
             self.texruns = 0
-            self.texdone = 1
+            self.texdone = True
             self.texinput.close()                        # close the input queue and
             gotevent = self.waitforevent(self.quitevent) # wait for finish of the output
         try:
             self.texmessage = ""
-            while 1:
-                self.texmessage += self.gotqueue.get_nowait()
-        except Queue.Empty:
+            while True:
+                self.texmessage += self.gotqueue.get_nowait().decode(self.texenc)
+        except queue.Empty:
             pass
         self.texmessage = self.texmessage.replace("\r\n", "\n").replace("\r", "\n")
         self.texmessageparsed = self.texmessage
@@ -1056,26 +1057,25 @@ class texrunner:
         "resets the tex runner to its initial state (upto its record to old dvi file(s))"
         if self.texruns:
             self.finishdvi()
-        if self.texdebug is not None:
-            self.texdebug.write("%s\n%% preparing restart of %s\n" % ("%"*80, self.mode))
         self.executeid = 0
         self.page = 0
-        self.texdone = 0
+        self.texdone = False
         if reinit:
-            self.preamblemode = 1
+            self.preamblemode = True
             for expr, texmessages in self.preambles:
                 self.execute(expr, texmessages)
             if self.mode == "latex":
                 self.execute("\\begin{document}", self.defaulttexmessagesbegindoc + self.texmessagesbegindoc)
-            self.preamblemode = 0
+            self.preamblemode = False
         else:
             self.preambles = []
-            self.preamblemode = 1
+            self.preamblemode = True
 
     def set(self, mode=_unset,
                   lfs=_unset,
                   docclass=_unset,
                   docopt=_unset,
+                  texenc=_unset,
                   usefiles=_unset,
                   waitfortex=_unset,
                   showwaitfortex=_unset,
@@ -1107,6 +1107,8 @@ class texrunner:
             self.docclass = docclass
         if docopt is not _unset:
             self.docopt = docopt
+        if texenc is not _unset:
+            self.texenc = texenc
         if usefiles is not _unset:
             self.usefiles = usefiles
         if waitfortex is not _unset:
@@ -1116,12 +1118,7 @@ class texrunner:
         if texipc is not _unset:
             self.texipc = texipc
         if texdebug is not _unset:
-            if self.texdebug is not None:
-                self.texdebug.close()
-            if texdebug[-4:] == ".tex":
-                self.texdebug = open(texdebug, "w")
-            else:
-                self.texdebug = open("%s.tex" % texdebug, "w")
+            self.texdebug = texdebug
         if dvidebug is not _unset:
             self.dvidebug = dvidebug
         if errordebug is not _unset:
@@ -1175,12 +1172,12 @@ class texrunner:
             raise ValueError("None expression is invalid")
         if self.texdone:
             self.reset(reinit=1)
-        first = 0
+        first = False
         if self.preamblemode:
             if self.mode == "latex":
                 self.execute("\\begin{document}", self.defaulttexmessagesbegindoc + self.texmessagesbegindoc)
-            self.preamblemode = 0
-            first = 1
+            self.preamblemode = False
+            first = True
         textattrs = attr.mergeattrs(textattrs) # perform cleans
         attr.checkattrs(textattrs, [textattr, trafo.trafo_pt, style.fillstyle])
         trafos = attr.getattrs(textattrs, [trafo.trafo_pt])
@@ -1192,7 +1189,7 @@ class texrunner:
             expr = textattrs[lentextattrs-1-i].apply(expr)
         try:
             self.execute(expr, self.defaulttexmessagesdefaultrun + self.texmessagesdefaultrun + texmessages)
-        except TexResultError, e:
+        except TexResultError as e:
             warnings.warn("We try to finish the dvi due to an unhandled tex error", PyXTeXWarning)
             try:
                 self.finishdvi(ignoretail=1)
@@ -1230,7 +1227,7 @@ class texrunner:
         # first we load sev.tex
         if not self.textboxesincluded:
             self.execute(r"\input textboxes.tex", [texmessage.load])
-            self.textboxesincluded = 1
+            self.textboxesincluded = True
         # define page shapes
         pageshapes_str = "\\hsize=%.5ftruept%%\n\\vsize=%.5ftruept%%\n" % (72.27/72*unit.topt(pageshapes[0][0]), 72.27/72*unit.topt(pageshapes[0][1]))
         pageshapes_str += "\\lohsizes={%\n"
@@ -1245,7 +1242,7 @@ class texrunner:
         parnos = []
         parshapes = []
         loop = 0
-        while 1:
+        while True:
             self.execute(pageshapes_str, [])
             parnos_str = "}{".join(parnos)
             if parnos_str:
@@ -1300,8 +1297,8 @@ class texrunner:
                     pass
                 else:
                     # we have to append the breaking of the previous paragraph
-                    oldparshape = " ".join(parshapes[-1].split(' ')[2:2+2*lastprevgraf])
-                    oldparshape = oldparshape.split('}')[0]
+                    oldparshape = " ".join(parshapes[-1].split(" ")[2:2+2*lastprevgraf])
+                    oldparshape = oldparshape.split("}")[0]
                     if len(parshape):
                         oldparshape = " " + oldparshape
                     parshape = " 0pt ".join(["%.5ftruept" % width for i in range(prevgraf - lastprevgraf)])

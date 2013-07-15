@@ -20,8 +20,8 @@
 # along with PyX; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
-import cStringIO, copy, time, math
-import bbox, config, style, version, unit, trafo
+import io, copy, time, math
+from . import bbox, config, style, version, unit, trafo, writer
 
 
 class PSregistry:
@@ -36,7 +36,7 @@ class PSregistry:
 
     def add(self, resource):
         rkey = (resource.type, resource.id)
-        if self.resourceshash.has_key(rkey):
+        if rkey in self.resourceshash:
            self.resourceshash[rkey].merge(resource)
         else:
            self.resourceshash[rkey] = resource
@@ -85,7 +85,8 @@ class PSdefinition(PSresource):
 
     def output(self, file, writer, registry):
         file.write("%%%%BeginResource: %s\n" % self.id)
-        file.write("%(body)s /%(id)s exch def\n" % self.__dict__)
+        file.write_bytes(self.body)
+        file.write(" /%s exch def\n" % self.id)
         file.write("%%EndResource\n")
 
 #
@@ -126,13 +127,14 @@ class EPSwriter(_PSwriter):
 
     def __init__(self, document, file, **kwargs):
         _PSwriter.__init__(self, **kwargs)
+        file = writer.writer(file)
 
         if len(document.pages) != 1:
             raise ValueError("EPS file can be constructed out of a single page document only")
         page = document.pages[0]
         canvas = page.canvas
 
-        pagefile = cStringIO.StringIO()
+        pagefile = writer.writer(io.BytesIO())
         registry = PSregistry()
         acontext = context()
         pagebbox = bbox.empty()
@@ -150,7 +152,7 @@ class EPSwriter(_PSwriter):
         registry.output(file, self)
         file.write("%%EndProlog\n")
 
-        file.write(pagefile.getvalue())
+        file.write_bytes(pagefile.file.getvalue())
         pagefile.close()
 
         file.write("showpage\n")
@@ -162,11 +164,12 @@ class PSwriter(_PSwriter):
 
     def __init__(self, document, file, writebbox=False, **kwargs):
         _PSwriter.__init__(self, **kwargs)
+        file = writer.writer(file)
 
         # We first have to process the content of the pages, writing them into the stream pagesfile
         # Doing so, we fill the registry and also calculate the page bounding boxes, which are
         # stored in page._bbox for every page
-        pagesfile = cStringIO.StringIO()
+        pagesfile = writer.writer(io.BytesIO())
         registry = PSregistry()
 
         # calculated bounding boxes of the whole document
@@ -174,7 +177,7 @@ class PSwriter(_PSwriter):
 
         for nr, page in enumerate(document.pages):
             # process contents of page
-            pagefile = cStringIO.StringIO()
+            pagefile = writer.writer(io.BytesIO())
             acontext = context()
             pagebbox = bbox.empty()
             page.processPS(pagefile, self, acontext, registry, pagebbox)
@@ -193,7 +196,7 @@ class PSwriter(_PSwriter):
             pagesfile.write("/pgsave save def\n")
 
             pagesfile.write("%%EndPageSetup\n")
-            pagesfile.write(pagefile.getvalue())
+            pagesfile.write_bytes(pagefile.file.getvalue())
             pagefile.close()
             pagesfile.write("pgsave restore\n")
             pagesfile.write("showpage\n")
@@ -212,7 +215,7 @@ class PSwriter(_PSwriter):
                 paperformats[page.paperformat] = page.paperformat
 
         first = 1
-        for paperformat in paperformats.values():
+        for paperformat in list(paperformats.values()):
             if first:
                 file.write("%%DocumentMedia: ")
                 first = 0
@@ -241,7 +244,7 @@ class PSwriter(_PSwriter):
         #file.write("%%BeginSetup\n")
         #file.write("%%EndSetup\n")
 
-        file.write(pagesfile.getvalue())
+        file.write_bytes(pagesfile.file.getvalue())
         pagesfile.close()
 
         file.write("%%Trailer\n")
@@ -258,6 +261,6 @@ class context:
 
     def __call__(self, **kwargs):
         newcontext = copy.copy(self)
-        for key, value in kwargs.items():
+        for key, value in list(kwargs.items()):
             setattr(newcontext, key, value)
         return newcontext
